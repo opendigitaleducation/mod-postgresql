@@ -1,0 +1,49 @@
+apply from: "gradle/vertx.gradle"
+
+
+dependencies {
+	compile("com.github.mauricio:postgresql-async_2.10:$postgresqlAsyncVersion") {
+    exclude group: 'io.netty'
+  }
+}
+
+test {
+
+}
+
+def configurePom(def pom) {
+  pom.project {
+    name rootProject.name
+    description 'Postgresql module'
+    inceptionYear '2015'
+    packaging 'jar'
+
+    url 'https://github.com/web-education/mod-postgresql'
+
+    developers {
+      developer {
+        id 'dboissin'
+        name 'Damien BOISSIN'
+        email 'damien.boissin@web-education.net'
+      }
+    }
+
+    scm {
+      connection 'scm:git:ssh://git@github.com:web-education/mod-postgresql.git'
+      developerConnection 'scm:git:ssh://git@github.com:web-education/mod-postgresql.git'
+      url 'https://github.com/web-education/mod-postgresql.git'
+    }
+
+    licenses {
+      license {
+        name 'The Apache Software License, Version 2.0'
+        url 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+        distribution 'repo'
+      }
+    }
+
+    properties {
+      setProperty('project.build.sourceEncoding', 'UTF8')
+    }
+  }
+}

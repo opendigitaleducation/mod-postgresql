@@ -1,0 +1,13 @@
+{
+  "main":"fr.wseduc.sql.SqlPersistor",
+  "worker" : true,
+  "multi-threaded" : true,
+
+  "description":"Postgresql module",
+  "licenses": ["The Apache Software License Version 2.0"],
+  "author": "Damien BOISSIN",
+
+  "keywords": ["postgres", "postgresql", "sql", "db"],
+  "homepage": "https://github.com/web-education/mod-postgresql"
+
+}

@@ -1,55 +1,44 @@
 package fr.wseduc.sql;
 
-import com.github.mauricio.async.db.*;
-import com.github.mauricio.async.db.pool.ConnectionPool;
-import com.github.mauricio.async.db.pool.PoolConfiguration$;
-import com.github.mauricio.async.db.postgresql.PostgreSQLConnection;
-import com.github.mauricio.async.db.postgresql.pool.PostgreSQLConnectionFactory;
-import com.github.mauricio.async.db.postgresql.util.URLParser;
-import com.github.mauricio.async.db.util.ExecutorServiceUtils$;
-import com.github.mauricio.async.db.util.NettyUtils$;
-import io.netty.util.CharsetUtil;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.vertx.java.busmods.BusModBase;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.json.JsonArray;
-import org.vertx.java.core.json.JsonElement;
 import org.vertx.java.core.json.JsonObject;
-import scala.collection.Seq;
-import scala.concurrent.Await;
-import scala.concurrent.Future;
-import scala.concurrent.duration.Duration;
 
-import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.sql.*;
+
+import static fr.wseduc.sql.TimestampEncoderDecoder.encode;
 
 public class SqlPersistor extends BusModBase implements Handler<Message<JsonObject>> {
 
-	private ConnectionPool<PostgreSQLConnection> pool;
+	private HikariDataSource ds;
 
 	@Override
 	public void start() {
 		super.start();
-		String url = config.getString("url", "jdbc:postgresql://localhost:5432/testdb?user=postgres");
-		Configuration configuration = URLParser.parse(url, CharsetUtil.UTF_8);
-		PostgreSQLConnectionFactory factory = new PostgreSQLConnectionFactory(
-				configuration,
-				NettyUtils$.MODULE$.DefaultEventLoopGroup(),
-				ExecutorServiceUtils$.MODULE$.CachedExecutionContext()
-		);
-		pool = new ConnectionPool<>(
-				factory,
-				PoolConfiguration$.MODULE$.Default(),
-				ExecutorServiceUtils$.MODULE$.CachedExecutionContext()
-		);
+		String url = config.getString("url", "jdbc:postgresql://localhost:5432/test");
+
+		HikariConfig conf = new HikariConfig();
+		conf.setJdbcUrl(url);
+		conf.setUsername(config.getString("username", "postgres"));
+		conf.setPassword(config.getString("password", ""));
+		conf.addDataSourceProperty("cachePrepStmts", "true");
+		conf.addDataSourceProperty("prepStmtCacheSize", "250");
+		conf.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
+		conf.addDataSourceProperty("useServerPrepStmts", "true");
+		ds = new HikariDataSource(conf);
+
 		vertx.eventBus().registerHandler(config.getString("address", "sql.persistor"), this);
 	}
 
 	@Override
 	public void stop() {
 		super.stop();
-		if (pool != null) {
-			pool.close();
+		if (ds != null) {
+			ds.close();
 		}
 	}
 
@@ -78,24 +67,69 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 	}
 
 	private void doRaw(Message<JsonObject> message) {
-		Future<QueryResult> future = raw(message.body());
-		if (future != null) {
-			reply(message, future);
-		} else {
-			sendError(message, "invalid.query");
+		Connection connection = null;
+		try {
+			connection = ds.getConnection();
+
+			JsonObject result = raw(message.body(), connection);
+			if (result != null) {
+				sendOK(message, result);
+			} else {
+				sendError(message, "invalid.query");
+			}
+		} catch (SQLException e) {
+			sendError(message, e.getMessage(), e);
+		} finally {
+			if (connection != null) {
+				try {
+					connection.close();
+				} catch (SQLException e) {
+					logger.error(e.getMessage(), e);
+				}
+			}
 		}
 	}
 
-	private Future<QueryResult> raw(JsonObject json) {
+
+	private JsonObject raw(JsonObject json, Connection connection) throws SQLException {
 		String query = json.getString("command");
 		if (query == null || query.isEmpty()) {
 			return null;
 		}
-		return raw(query);
+		return raw(query, connection);
 	}
 
-	private Future<QueryResult> raw(String query) {
-		return pool.sendQuery(query);
+	private JsonObject raw(String query, Connection connection) throws SQLException {
+		Statement statement = null;
+		ResultSet resultSet = null;
+		try {
+			statement = connection.createStatement();
+			if (statement.execute(query)) {
+				resultSet = statement.getResultSet();
+				return buildResults(resultSet);
+			} else {
+				return buildResults(statement.getUpdateCount());
+			}
+		} finally {
+			if (resultSet != null) {
+				resultSet.close();
+			}
+			if (statement != null) {
+				statement.close();
+			}
+		}
+	}
+
+	private JsonObject raw(String query) throws SQLException {
+		Connection connection = null;
+		try {
+			connection = ds.getConnection();
+			return raw(query, connection);
+		} finally {
+			if (connection != null) {
+				connection.close();
+			}
+		}
 	}
 
 	private void doTransaction(Message<JsonObject> message) {
@@ -107,10 +141,10 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		if (logger.isDebugEnabled()) {
 			logger.debug("TRANSACTION-JSON: " + statements.encodePrettily());
 		}
-		PostgreSQLConnection connection = null;
+		Connection connection = null;
 		try {
-			connection = sync(pool.take());
-			sync(connection.sendQuery("BEGIN;"));
+			connection = ds.getConnection();
+			connection.setAutoCommit(false);
 			JsonArray results = new JsonArray();
 			for (Object s : statements) {
 				if (!(s instanceof JsonObject)) continue;
@@ -118,49 +152,88 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 				String action = json.getString("action", "");
 				switch (action) {
 					case "insert":
-						results.add(buildResults(sync(raw(insertQuery(json)))));
+						results.add(raw(insertQuery(json), connection));
 						break;
 					case "select":
-						results.add(buildResults(sync(raw(selectQuery(json)))));
+						results.add(raw(selectQuery(json), connection));
 						break;
 					case "raw":
-						results.add(buildResults(sync(raw(json))));
+						results.add(raw(json, connection));
 						break;
 					case "prepared":
-						results.add(buildResults(sync(prepared(json))));
+						results.add(prepared(json, connection));
 						break;
 					default:
-						sync(connection.sendQuery("ROLLBACK;"));
+						connection.rollback();
 						throw new IllegalArgumentException("invalid.action");
 				}
 			}
-			sync(connection.sendQuery("COMMIT;"));
+			connection.commit();
 			sendOK(message, new JsonObject().putArray("results", results));
 		} catch (Exception e) {
 			sendError(message, e.getMessage(), e);
 		} finally {
 			if (connection != null) {
-				pool.giveBack(connection);
+				try {
+					connection.close();
+				} catch (SQLException e) {
+					logger.error(e.getMessage(), e);
+				}
 			}
 		}
 	}
 
 	private void doPrepared(Message<JsonObject> message) {
-		Future<QueryResult> future = prepared(message.body());
-		if (future != null) {
-			reply(message, future);
-		} else {
-			sendError(message, "invalid.query");
+		Connection connection = null;
+		try {
+			connection = ds.getConnection();
+
+			JsonObject result = prepared(message.body(), connection);
+			if (result != null) {
+				sendOK(message, result);
+			} else {
+				sendError(message, "invalid.query");
+			}
+		} catch (SQLException e) {
+			sendError(message, e.getMessage(), e);
+		} finally {
+			if (connection != null) {
+				try {
+					connection.close();
+				} catch (SQLException e) {
+					logger.error(e.getMessage(), e);
+				}
+			}
 		}
 	}
 
-	private Future<QueryResult> prepared(JsonObject json) {
+	private JsonObject prepared(JsonObject json, Connection connection) throws SQLException {
 		String query = json.getString("statement");
 		JsonArray values = json.getArray("values");
 		if (query == null || query.isEmpty() || values == null) {
 			return null;
 		}
-		return pool.sendPreparedStatement(query, convert(values.toList()));
+		PreparedStatement statement = null;
+		ResultSet resultSet = null;
+		try {
+			statement = connection.prepareStatement(query);
+			for (int i = 0; i < values.size(); i++) {
+				statement.setObject(i + 1, values.get(i));
+			}
+			if (statement.execute()) {
+				resultSet = statement.getResultSet();
+				return buildResults(resultSet);
+			} else {
+				return buildResults(statement.getUpdateCount());
+			}
+		} finally {
+			if (resultSet != null) {
+				resultSet.close();
+			}
+			if (statement != null) {
+				statement.close();
+			}
+		}
 	}
 
 	private void doInsert(Message<JsonObject> message) {
@@ -170,8 +243,11 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 			sendError(message, "invalid.query");
 			return;
 		}
-		Future<QueryResult> future = pool.sendQuery(query);
-		reply(message, future);
+		try {
+			sendOK(message, raw(query));
+		} catch (SQLException e) {
+			sendError(message, e.getMessage(), e);
+		}
 	}
 
 	private String insertQuery(JsonObject json) {
@@ -216,8 +292,11 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 			sendError(message, "invalid.query");
 			return;
 		}
-		Future<QueryResult> future = pool.sendQuery(query);
-		reply(message, future);
+		try {
+			sendOK(message, raw(query));
+		} catch (SQLException e) {
+			sendError(message, e.getMessage(), e);
+		}
 	}
 
 	private String selectQuery(JsonObject json) {
@@ -241,63 +320,73 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		return sb.toString();
 	}
 
-	private void reply(Message<JsonObject> message, Future<QueryResult> future) {
-		try {
-			QueryResult result = Await.result(future, Duration.apply(5, TimeUnit.SECONDS));
-			sendOK(message, buildResults(result));
-		} catch (Exception e) {
-			sendError(message, "database.error", e);
-		}
-	}
-
-	private JsonObject buildResults(QueryResult qr) {
+	private JsonObject buildResults(int rows) {
 		JsonObject result = new JsonObject();
 		result.putString("status", "ok");
-		result.putString("message", qr.statusMessage());
-		result.putNumber("rows", qr.rowsAffected());
+		result.putString("message", "");
 		JsonArray fields = new JsonArray();
 		JsonArray results = new JsonArray();
 		result.putArray("fields", fields);
 		result.putArray("results", results);
-
-		if (qr.rows().isDefined()) {
-			ResultSet resultSet = qr.rows().get();
-			for (String f : convert(resultSet.columnNames())) {
-				fields.add(f);
-			}
-			for (RowData rowData : convert(resultSet)) {
-				results.add(rowDataToJsonArray(rowData));
-			}
-		}
+		result.putNumber("rows", rows);
 		return result;
 	}
 
-	private Object dataToJson(Object data) {
-		if (data == null) {
-			return null;
-		} else if (!(data instanceof scala.Boolean) &&
-				!(data instanceof Number) && !(data instanceof String) &&
-				!(data instanceof Byte[]) && !(data instanceof JsonElement)) {
-			return data.toString();
-		} else {
-			return data;
+	private JsonObject buildResults(ResultSet rs) throws SQLException {
+		JsonObject result = new JsonObject();
+		result.putString("status", "ok");
+		result.putString("message", "");
+		JsonArray fields = new JsonArray();
+		JsonArray results = new JsonArray();
+		result.putArray("fields", fields);
+		result.putArray("results", results);
+		ResultSetMetaData rsmd = rs.getMetaData();
+		int count = 0;
+		while(rs.next()) {
+			count++;
+			int numColumns = rsmd.getColumnCount();
+			JsonArray row = new JsonArray();
+			results.add(row);
+			for (int i = 1; i < numColumns + 1; i++) {
+
+				if (count == 1) {
+					String columnName = rsmd.getColumnName(i);
+					fields.add(columnName);
+				}
+
+				if (rsmd.getColumnType(i)==java.sql.Types.ARRAY) {
+					row.add(rs.getArray(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.BIGINT) {
+					row.add(rs.getInt(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.BOOLEAN) {
+					row.add(rs.getBoolean(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.BLOB) {
+					row.add(rs.getBlob(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.DOUBLE) {
+					row.add(rs.getDouble(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.FLOAT) {
+					row.add(rs.getFloat(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.INTEGER) {
+					row.add(rs.getInt(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.NVARCHAR) {
+					row.add(rs.getNString(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.VARCHAR) {
+					row.add(rs.getString(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.TINYINT) {
+					row.add(rs.getInt(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.SMALLINT) {
+					row.add(rs.getInt(i));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.DATE) {
+					row.add(encode(rs.getDate(i)));
+				} else if (rsmd.getColumnType(i)==java.sql.Types.TIMESTAMP) {
+					row.add(encode(rs.getTimestamp(i)));
+				} else {
+					row.add(rs.getObject(i).toString());
+				}
+			}
+			result.putNumber("rows", count);
 		}
-	}
-
-	private JsonArray rowDataToJsonArray(RowData rowData) {
-		JsonArray values = new JsonArray();
-		for (Object o: convert(rowData)) {
-			values.add(dataToJson(o));
-		}
-		return values;
-	}
-
-	private <T> List<T> convert(Seq<T> seq) {
-		return scala.collection.JavaConversions.seqAsJavaList(seq);
-	}
-
-	private <T> Seq<T> convert(List<T> list) {
-		return scala.collection.JavaConversions.asScalaBuffer(list).toSeq();
+		return result;
 	}
 
 	private String escapeField(String str) {
@@ -312,10 +401,6 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		} else {
 			return "'" + v.toString().replace("'", "''") + "'";
 		}
-	}
-
-	private <T> T sync(Future<T> future) throws Exception {
-		return Await.result(future, Duration.apply(5, TimeUnit.SECONDS));
 	}
 
 }

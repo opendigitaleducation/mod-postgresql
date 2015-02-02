@@ -20,7 +20,9 @@ public class SqlPersistorTest extends TestVerticle {
 	public void start() {
 		JsonObject config = new JsonObject();
 		config.putString("address", PERSISTOR_ADDRESS);
-		config.putString("url", "jdbc:postgresql://localhost:5432/test?user=web-education&password=We_1234");
+		config.putString("url", "jdbc:postgresql://localhost:5432/test");
+		config.putString("username", "web-education");
+		config.putString("password", "We_1234");
 		container.deployModule(System.getProperty("vertx.modulename"), config, new AsyncResultHandler<String>() {
 			@Override
 			public void handle(AsyncResult<String> ar) {
@@ -42,7 +44,7 @@ public class SqlPersistorTest extends TestVerticle {
 //				"username VARCHAR(255)" +
 //				");";
 	//	String q = "INSERT INTO pff (username) VALUES ('aïe') RETURNING id";
-	//	String q = "Select * from pff";
+//		String q = "Select * from test.tests";
 		JsonObject raw = new JsonObject()
 				.putString("command", q)
 				.putString("action", "raw");
@@ -59,7 +61,7 @@ public class SqlPersistorTest extends TestVerticle {
 	public void testTransaction() {
 		JsonArray statements = new JsonArray();
 		String q =  "INSERT INTO test.tests (name,number,owner) VALUES " +
-				"('paper',3,'a6930a8f-d5cc-4968-9208-5251210f99bd') RETURNING id";
+				"('paper',3,'a6930a8f-d5cc-4968-9208-5251210f99bd')";
 		JsonObject raw = new JsonObject()
 				.putString("command", q)
 				.putString("action", "raw");
@@ -73,6 +75,10 @@ public class SqlPersistorTest extends TestVerticle {
 				)
 				.putString("returning", "id")
 				.putString("action", "insert");
+		JsonObject preparedS = new JsonObject()
+				.putString("statement", "SELECT * FROM test.tests WHERE name = ?")
+				.putArray("values", new JsonArray().add("bla"))
+				.putString("action", "prepared");
 		JsonObject prepared = new JsonObject()
 				.putString("statement", "UPDATE test.tests SET number = ?, name = ? WHERE name = ?")
 				.putArray("values", new JsonArray().add(99).add("modified").add("bla"))
@@ -81,7 +87,7 @@ public class SqlPersistorTest extends TestVerticle {
 				.putString("table", "test.tests")
 				.putArray("fields", new JsonArray().add("id").add("name").add("number"))
 				.putString("action", "select");
-		statements.add(raw).add(insert).add(prepared).add(select);
+		statements.add(raw).add(insert).add(preparedS).add(prepared).add(select);
 		JsonObject json = new JsonObject()
 				.putString("action", "transaction")
 				.putArray("statements", statements);

@@ -2,9 +2,9 @@ apply from: "gradle/vertx.gradle"
 
 
 dependencies {
-	compile("com.github.mauricio:postgresql-async_2.10:$postgresqlAsyncVersion") {
-    exclude group: 'io.netty'
-  }
+  compile "com.zaxxer:HikariCP-java6:$cpVersion"
+  compile "org.postgresql:postgresql:$postgresDriverVersion"
+  compile "joda-time:joda-time:$jodaTimeVersion"
 }
 
 test {

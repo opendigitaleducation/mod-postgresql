@@ -356,52 +356,82 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		JsonArray results = new JsonArray();
 		result.putArray("fields", fields);
 		result.putArray("results", results);
+
 		ResultSetMetaData rsmd = rs.getMetaData();
+		int numColumns = rsmd.getColumnCount();
+		for (int i = 1; i < numColumns + 1; i++) {
+			fields.add(rsmd.getColumnName(i));
+		}
+
 		int count = 0;
 		while(rs.next()) {
 			count++;
-			int numColumns = rsmd.getColumnCount();
 			JsonArray row = new JsonArray();
 			results.add(row);
 			for (int i = 1; i < numColumns + 1; i++) {
-
-				if (count == 1) {
-					String columnName = rsmd.getColumnName(i);
-					fields.add(columnName);
-				}
-
-				if (rsmd.getColumnType(i)==java.sql.Types.ARRAY) {
-					row.add(rs.getArray(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.BIGINT) {
-					row.add(rs.getInt(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.BOOLEAN) {
-					row.add(rs.getBoolean(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.BLOB) {
-					row.add(rs.getBlob(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.DOUBLE) {
-					row.add(rs.getDouble(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.FLOAT) {
-					row.add(rs.getFloat(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.INTEGER) {
-					row.add(rs.getInt(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.NVARCHAR) {
-					row.add(rs.getNString(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.VARCHAR) {
-					row.add(rs.getString(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.TINYINT) {
-					row.add(rs.getInt(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.SMALLINT) {
-					row.add(rs.getInt(i));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.DATE) {
-					row.add(encode(rs.getDate(i)));
-				} else if (rsmd.getColumnType(i)==java.sql.Types.TIMESTAMP) {
-					row.add(encode(rs.getTimestamp(i)));
-				} else {
-					row.add(rs.getObject(i).toString());
+				switch (rsmd.getColumnType(i)) {
+					case Types.NULL :
+						row.add(null);
+						break;
+					case Types.ARRAY:
+						row.add(rs.getArray(i));
+						break;
+					case Types.TINYINT:
+					case Types.SMALLINT:
+					case Types.INTEGER:
+					case Types.BIGINT:
+						long l = rs.getLong(i);
+						if (rs.wasNull()) {
+							row.add(null);
+						} else {
+							row.add(l);
+						}
+						break;
+					case Types.BIT:
+					case Types.BOOLEAN :
+						boolean b = rs.getBoolean(i);
+						if (rs.wasNull()) {
+							row.add(null);
+						} else {
+							row.add(b);
+						}
+						break;
+					case Types.BLOB:
+						row.add(rs.getBlob(i));
+						break;
+					case Types.FLOAT:
+					case Types.REAL:
+					case Types.DOUBLE:
+						double d = rs.getDouble(i);
+						if (rs.wasNull()) {
+							row.add(null);
+						} else {
+							row.add(d);
+						}
+						break;
+					case Types.NVARCHAR:
+					case Types.VARCHAR:
+					case Types.LONGNVARCHAR:
+					case Types.LONGVARCHAR:
+						row.add(rs.getString(i));
+						break;
+					case Types.DATE:
+						row.add(encode(rs.getDate(i)));
+						break;
+					case Types.TIMESTAMP:
+						row.add(encode(rs.getTimestamp(i)));
+						break;
+					default:
+						Object o = rs.getObject(i);
+						if (o != null) {
+							row.add(rs.getObject(i).toString());
+						} else {
+							row.add(null);
+						}
 				}
 			}
-			result.putNumber("rows", count);
 		}
+		result.putNumber("rows", count);
 		return result;
 	}
 

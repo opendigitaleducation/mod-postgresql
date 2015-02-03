@@ -102,14 +102,22 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 	private JsonObject raw(String query, Connection connection) throws SQLException {
 		Statement statement = null;
 		ResultSet resultSet = null;
+		if (logger.isDebugEnabled()) {
+			logger.debug("query : " + query);
+		}
 		try {
 			statement = connection.createStatement();
+			JsonObject r;
 			if (statement.execute(query)) {
 				resultSet = statement.getResultSet();
-				return buildResults(resultSet);
+				r = buildResults(resultSet);
 			} else {
-				return buildResults(statement.getUpdateCount());
+				r = buildResults(statement.getUpdateCount());
 			}
+			if (logger.isDebugEnabled()) {
+				logger.debug(r.encodePrettily());
+			}
+			return r;
 		} finally {
 			if (resultSet != null) {
 				resultSet.close();
@@ -213,6 +221,9 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		if (query == null || query.isEmpty() || values == null) {
 			return null;
 		}
+		if (logger.isDebugEnabled()) {
+			logger.debug("query : " + query + " - values : " + values.encode());
+		}
 		PreparedStatement statement = null;
 		ResultSet resultSet = null;
 		try {
@@ -220,12 +231,17 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 			for (int i = 0; i < values.size(); i++) {
 				statement.setObject(i + 1, values.get(i));
 			}
+			JsonObject r;
 			if (statement.execute()) {
 				resultSet = statement.getResultSet();
-				return buildResults(resultSet);
+				r = buildResults(resultSet);
 			} else {
-				return buildResults(statement.getUpdateCount());
+				r = buildResults(statement.getUpdateCount());
 			}
+			if (logger.isDebugEnabled()) {
+				logger.debug(r.encodePrettily());
+			}
+			return r;
 		} finally {
 			if (resultSet != null) {
 				resultSet.close();

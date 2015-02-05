@@ -9,6 +9,7 @@ import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
 
 import java.sql.*;
+import java.text.SimpleDateFormat;
 
 import static fr.wseduc.sql.TimestampEncoderDecoder.encode;
 
@@ -419,7 +420,12 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 						row.add(encode(rs.getDate(i)));
 						break;
 					case Types.TIMESTAMP:
-						row.add(encode(rs.getTimestamp(i)));
+						Timestamp t = rs.getTimestamp(i);
+						if (rs.wasNull()) {
+							row.add(null);
+						} else {
+							row.add(new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS").format(t));
+						}
 						break;
 					default:
 						Object o = rs.getObject(i);

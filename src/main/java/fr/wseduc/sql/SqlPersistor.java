@@ -389,6 +389,23 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 						}
 						break;
 					case Types.BIT:
+						int precision = rsmd.getPrecision(i);
+						if (precision != 1) {
+							long l1 = rs.getLong(i);
+							if (rs.wasNull()) {
+								row.add(null);
+							} else {
+								row.add(String.format("%0" + precision + "d", l1));
+							}
+						} else {
+							boolean b = rs.getBoolean(i);
+							if (rs.wasNull()) {
+								row.add(null);
+							} else {
+								row.add(b);
+							}
+						}
+						break;
 					case Types.BOOLEAN :
 						boolean b = rs.getBoolean(i);
 						if (rs.wasNull()) {

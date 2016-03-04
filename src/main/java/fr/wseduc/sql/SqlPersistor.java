@@ -6,6 +6,7 @@ import org.vertx.java.busmods.BusModBase;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.json.JsonArray;
+import org.vertx.java.core.json.JsonElement;
 import org.vertx.java.core.json.JsonObject;
 
 import java.sql.*;
@@ -230,7 +231,11 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		try {
 			statement = connection.prepareStatement(query);
 			for (int i = 0; i < values.size(); i++) {
-				statement.setObject(i + 1, values.get(i));
+				Object v = values.get(i);
+				if (v instanceof JsonElement) {
+					v = v.toString();
+				}
+				statement.setObject(i + 1, v);
 			}
 			JsonObject r;
 			if (statement.execute()) {

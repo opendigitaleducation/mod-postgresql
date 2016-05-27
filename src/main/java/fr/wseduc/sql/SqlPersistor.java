@@ -354,24 +354,12 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		return result;
 	}
 
-	private JsonObject buildResults(ResultSet rs) throws SQLException {
-		JsonObject result = new JsonObject();
-		result.putString("status", "ok");
-		result.putString("message", "");
-		JsonArray fields = new JsonArray();
-		JsonArray results = new JsonArray();
-		result.putArray("fields", fields);
-		result.putArray("results", results);
+	private void transformResultSet(JsonArray results, ResultSet rs) throws SQLException{
 
 		ResultSetMetaData rsmd = rs.getMetaData();
 		int numColumns = rsmd.getColumnCount();
-		for (int i = 1; i < numColumns + 1; i++) {
-			fields.add(rsmd.getColumnName(i));
-		}
 
-		int count = 0;
 		while(rs.next()) {
-			count++;
 			JsonArray row = new JsonArray();
 			results.add(row);
 			for (int i = 1; i < numColumns + 1; i++) {
@@ -380,7 +368,15 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 						row.add(null);
 						break;
 					case Types.ARRAY:
-						row.add(rs.getArray(i));
+						Array arr = rs.getArray(i);
+						if(rs.wasNull()){
+							row.add(null);
+						} else {
+							ResultSet arrRs = arr.getResultSet();
+							JsonArray jsonArray = new JsonArray();
+							transformResultSet(jsonArray, arrRs);
+							row.add(jsonArray);
+						}
 						break;
 					case Types.TINYINT:
 					case Types.SMALLINT:
@@ -459,7 +455,26 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 				}
 			}
 		}
-		result.putNumber("rows", count);
+	}
+
+	private JsonObject buildResults(ResultSet rs) throws SQLException {
+		JsonObject result = new JsonObject();
+		result.putString("status", "ok");
+		result.putString("message", "");
+		JsonArray fields = new JsonArray();
+		JsonArray results = new JsonArray();
+		result.putArray("fields", fields);
+		result.putArray("results", results);
+
+		ResultSetMetaData rsmd = rs.getMetaData();
+		int numColumns = rsmd.getColumnCount();
+		for (int i = 1; i < numColumns + 1; i++) {
+			fields.add(rsmd.getColumnName(i));
+		}
+
+		transformResultSet(results, rs);
+
+		result.putNumber("rows", results.size());
 		return result;
 	}
 

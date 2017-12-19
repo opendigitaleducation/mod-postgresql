@@ -43,6 +43,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		conf.setJdbcUrl(url);
 		conf.setUsername(config.getString("username", "postgres"));
 		conf.setPassword(config.getString("password", ""));
+		conf.setMaximumPoolSize(config.getInteger("pool_size", 10));
 		conf.addDataSourceProperty("cachePrepStmts", "true");
 		conf.addDataSourceProperty("prepStmtCacheSize", "250");
 		conf.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");

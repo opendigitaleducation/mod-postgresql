@@ -18,12 +18,11 @@ package fr.wseduc.sql;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import io.vertx.core.Handler;
+import io.vertx.core.eventbus.Message;
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 import org.vertx.java.busmods.BusModBase;
-import org.vertx.java.core.Handler;
-import org.vertx.java.core.eventbus.Message;
-import org.vertx.java.core.json.JsonArray;
-import org.vertx.java.core.json.JsonElement;
-import org.vertx.java.core.json.JsonObject;
 
 import java.sql.*;
 import java.text.SimpleDateFormat;
@@ -50,11 +49,11 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		conf.addDataSourceProperty("useServerPrepStmts", "true");
 		ds = new HikariDataSource(conf);
 
-		vertx.eventBus().registerHandler(config.getString("address", "sql.persistor"), this);
+		vertx.eventBus().consumer(config.getString("address", "sql.persistor"), this);
 	}
 
 	@Override
-	public void stop() {
+	public void stop() throws Exception {
 		super.stop();
 		if (ds != null) {
 			ds.close();
@@ -160,7 +159,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 	}
 
 	private void doTransaction(Message<JsonObject> message) {
-		JsonArray statements = message.body().getArray("statements");
+		JsonArray statements = message.body().getJsonArray("statements");
 		if (statements == null || statements.size() == 0) {
 			sendError(message, "missing.statements");
 			return;
@@ -196,7 +195,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 				}
 			}
 			connection.commit();
-			sendOK(message, new JsonObject().putArray("results", results));
+			sendOK(message, new JsonObject().put("results", results));
 		} catch (Exception e) {
 			sendError(message, e.getMessage(), e);
 		} finally {
@@ -236,7 +235,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 
 	private JsonObject prepared(JsonObject json, Connection connection) throws SQLException {
 		String query = json.getString("statement");
-		JsonArray values = json.getArray("values");
+		JsonArray values = json.getJsonArray("values");
 		if (query == null || query.isEmpty() || values == null) {
 			return null;
 		}
@@ -248,8 +247,8 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		try {
 			statement = connection.prepareStatement(query);
 			for (int i = 0; i < values.size(); i++) {
-				Object v = values.get(i);
-				if (v instanceof JsonElement) {
+				Object v = values.getValue(i);
+				if (v instanceof Object) {
 					v = v.toString();
 				}
 				statement.setObject(i + 1, v);
@@ -291,8 +290,8 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 
 	private String insertQuery(JsonObject json) {
 		String table = json.getString("table");
-		JsonArray fields = json.getArray("fields");
-		JsonArray values = json.getArray("values");
+		JsonArray fields = json.getJsonArray("fields");
+		JsonArray values = json.getJsonArray("values");
 		String returning = json.getString("returning");
 		if (table == null || table.isEmpty() || fields == null ||
 				fields.size() == 0 || values == null || values.size() == 0) {
@@ -340,7 +339,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 
 	private String selectQuery(JsonObject json) {
 		String table = json.getString("table");
-		JsonArray fields = json.getArray("fields");
+		JsonArray fields = json.getJsonArray("fields");
 		if (table == null || table.isEmpty()) {
 			return null;
 		}
@@ -361,13 +360,13 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 
 	private JsonObject buildResults(int rows) {
 		JsonObject result = new JsonObject();
-		result.putString("status", "ok");
-		result.putString("message", "");
+		result.put("status", "ok");
+		result.put("message", "");
 		JsonArray fields = new JsonArray();
 		JsonArray results = new JsonArray();
-		result.putArray("fields", fields);
-		result.putArray("results", results);
-		result.putNumber("rows", rows);
+		result.put("fields", fields);
+		result.put("results", results);
+		result.put("rows", rows);
 		return result;
 	}
 
@@ -382,12 +381,12 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 			for (int i = 1; i < numColumns + 1; i++) {
 				switch (rsmd.getColumnType(i)) {
 					case Types.NULL :
-						row.add(null);
+						row.add((Object) null);
 						break;
 					case Types.ARRAY:
 						Array arr = rs.getArray(i);
 						if(rs.wasNull()){
-							row.add(null);
+							row.add((Object) null);
 						} else {
 							ResultSet arrRs = arr.getResultSet();
 							JsonArray jsonArray = new JsonArray();
@@ -401,7 +400,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 					case Types.BIGINT:
 						long l = rs.getLong(i);
 						if (rs.wasNull()) {
-							row.add(null);
+							row.add((Object) null);
 						} else {
 							row.add(l);
 						}
@@ -411,14 +410,14 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 						if (precision != 1) {
 							long l1 = rs.getLong(i);
 							if (rs.wasNull()) {
-								row.add(null);
+								row.add((Object) null);
 							} else {
 								row.add(String.format("%0" + precision + "d", l1));
 							}
 						} else {
 							boolean b = rs.getBoolean(i);
 							if (rs.wasNull()) {
-								row.add(null);
+								row.add((Object) null);
 							} else {
 								row.add(b);
 							}
@@ -427,7 +426,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 					case Types.BOOLEAN :
 						boolean b = rs.getBoolean(i);
 						if (rs.wasNull()) {
-							row.add(null);
+							row.add((Object) null);
 						} else {
 							row.add(b);
 						}
@@ -440,7 +439,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 					case Types.DOUBLE:
 						double d = rs.getDouble(i);
 						if (rs.wasNull()) {
-							row.add(null);
+							row.add((Object) null);
 						} else {
 							row.add(d);
 						}
@@ -457,7 +456,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 					case Types.TIMESTAMP:
 						Timestamp t = rs.getTimestamp(i);
 						if (rs.wasNull()) {
-							row.add(null);
+							row.add((Object) null);
 						} else {
 							row.add(new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS").format(t));
 						}
@@ -467,7 +466,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 						if (o != null) {
 							row.add(rs.getObject(i).toString());
 						} else {
-							row.add(null);
+							row.add((Object) null);
 						}
 				}
 			}
@@ -476,12 +475,12 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 
 	private JsonObject buildResults(ResultSet rs) throws SQLException {
 		JsonObject result = new JsonObject();
-		result.putString("status", "ok");
-		result.putString("message", "");
+		result.put("status", "ok");
+		result.put("message", "");
 		JsonArray fields = new JsonArray();
 		JsonArray results = new JsonArray();
-		result.putArray("fields", fields);
-		result.putArray("results", results);
+		result.put("fields", fields);
+		result.put("results", results);
 
 		ResultSetMetaData rsmd = rs.getMetaData();
 		int numColumns = rsmd.getColumnCount();
@@ -491,7 +490,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 
 		transformResultSet(results, rs);
 
-		result.putNumber("rows", results.size());
+		result.put("rows", results.size());
 		return result;
 	}
 

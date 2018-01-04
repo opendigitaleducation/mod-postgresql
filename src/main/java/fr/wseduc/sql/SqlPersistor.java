@@ -376,7 +376,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		int numColumns = rsmd.getColumnCount();
 
 		while(rs.next()) {
-			JsonArray row = new JsonArray();
+			JsonArray row = new fr.wseduc.webutils.collections.JsonArray();
 			results.add(row);
 			for (int i = 1; i < numColumns + 1; i++) {
 				switch (rsmd.getColumnType(i)) {

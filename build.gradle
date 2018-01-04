@@ -63,6 +63,7 @@ shadowJar {
     archiveName = "fr.wseduc~${project.name}~$version-$classifier.$extension"
     mergeServiceFiles {
       include 'META-INF/services/io.vertx.core.spi.VerticleFactory'
+      include 'META-INF/services/java.sql.Driver'
     }
 }
 

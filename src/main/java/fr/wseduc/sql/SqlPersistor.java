@@ -79,6 +79,9 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 			case "raw" :
 				doRaw(message);
 				break;
+			case "upsert" :
+				doUpsert(message);
+				break;
 			default :
 				sendError(message, "invalid.action");
 		}
@@ -293,6 +296,20 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		}
 	}
 
+	private void doUpsert(Message<JsonObject> message) {
+		JsonObject json = message.body();
+		String query = upsertQuery(json);
+		if (query == null) {
+			sendError(message, "invalid.query");
+			return;
+		}
+		try {
+			sendOK(message, raw(query));
+		} catch (SQLException e) {
+			sendError(message, e.getMessage(), e);
+		}
+	}
+
 	private String insertQuery(JsonObject json) {
 		String table = json.getString("table");
 		JsonArray fields = json.getJsonArray("fields");
@@ -322,6 +339,58 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 			}
 		}
 		sb.deleteCharAt(sb.length()-1);
+		if (returning != null) {
+			sb.append(" RETURNING ").append(returning);
+		}
+		return sb.toString();
+	}
+
+	private String upsertQuery(JsonObject json) {
+		String table = json.getString("table");
+		JsonArray fields = json.getJsonArray("fields");
+		JsonArray conflictFields = json.getJsonArray("conflictFields");
+		JsonArray updateFields = json.getJsonArray("updateFields");
+		boolean updateOnConflict = updateFields != null && !updateFields.isEmpty();
+		JsonArray values = json.getJsonArray("values");
+		String returning = json.getString("returning");
+		if (table == null || table.isEmpty() || fields == null ||
+				fields.size() == 0 || values == null || values.size() == 0) {
+			return null;
+		}
+		StringBuilder sb = new StringBuilder("INSERT INTO ")
+				.append(table)
+				.append(" (");
+		for (Object o : fields) {
+			if (!(o instanceof String)) continue;
+			sb.append(escapeField((String) o)).append(",");
+		}
+		sb.deleteCharAt(sb.length()-1);
+		sb.append(") VALUES ");
+		for (Object row : values) {
+			if (row instanceof JsonArray) {
+				sb.append("(");
+				for (Object o : (JsonArray) row) {
+					sb.append(escapeValue(o)).append(",");
+				}
+				sb.deleteCharAt(sb.length()-1);
+				sb.append("),");
+			}
+		}
+		sb.deleteCharAt(sb.length()-1);
+		sb.append(" ON CONFLICT (");
+		conflictFields.stream().forEach(field -> sb.append(escapeField((String)field)).append(","));
+		if (!conflictFields.isEmpty()) {
+			sb.deleteCharAt(sb.length()-1);
+		}
+		if(updateOnConflict){
+			sb.append(") DO UPDATE SET ");
+			updateFields.stream().forEach(field -> sb.append(escapeField((String)field)).append("= EXCLUDED.").append(escapeField((String)field)).append(","));
+			if (!updateFields.isEmpty()) {
+				sb.deleteCharAt(sb.length()-1);
+			}
+		}else {
+			sb.append(") DO NOTHING ");
+		}
 		if (returning != null) {
 			sb.append(" RETURNING ").append(returning);
 		}

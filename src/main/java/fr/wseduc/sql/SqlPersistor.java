@@ -26,17 +26,25 @@ import org.vertx.java.busmods.BusModBase;
 
 import java.sql.*;
 import java.text.SimpleDateFormat;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static fr.wseduc.sql.TimestampEncoderDecoder.encode;
+import static fr.wseduc.webutils.Utils.isNotEmpty;
 
 public class SqlPersistor extends BusModBase implements Handler<Message<JsonObject>> {
 
 	private HikariDataSource ds;
+	private HikariDataSource dsSlave;
+	private Pattern writingClausesPattern = Pattern.compile(
+			"(update\\s+|create\\s+|merge\\s+|delete\\s+|remove\\s+|insert\\s+|alter\\s+|add\\s+|drop\\s+|constraint\\s+)",
+			Pattern.CASE_INSENSITIVE);
 
 	@Override
 	public void start() {
 		super.start();
-		String url = config.getString("url", "jdbc:postgresql://localhost:5432/test");
+		final String url = config.getString("url", "jdbc:postgresql://localhost:5432/test");
+		final String urlSlave = config.getString("url-slave");
 
 		HikariConfig conf = new HikariConfig();
 		conf.setJdbcUrl(url);
@@ -48,6 +56,19 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		conf.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
 		conf.addDataSourceProperty("useServerPrepStmts", "true");
 		ds = new HikariDataSource(conf);
+
+		if (isNotEmpty(urlSlave)) {
+			HikariConfig confSlave = new HikariConfig();
+			confSlave.setJdbcUrl(urlSlave);
+			confSlave.setUsername(config.getString("username", "postgres"));
+			confSlave.setPassword(config.getString("password", ""));
+			confSlave.setMaximumPoolSize(config.getInteger("pool_size", 10));
+			confSlave.addDataSourceProperty("cachePrepStmts", "true");
+			confSlave.addDataSourceProperty("prepStmtCacheSize", "250");
+			confSlave.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
+			confSlave.addDataSourceProperty("useServerPrepStmts", "true");
+			dsSlave = new HikariDataSource(confSlave);
+		}
 
 		vertx.eventBus().consumer(config.getString("address", "sql.persistor"), this);
 	}
@@ -90,7 +111,13 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 	private void doRaw(Message<JsonObject> message) {
 		Connection connection = null;
 		try {
-			connection = ds.getConnection();
+			final String query = message.body().getString("command");
+			if (dsSlave != null && query != null) {
+				final Matcher m = writingClausesPattern.matcher(query);
+				if (!m.find()) {
+					connection = dsSlave.getConnection();
+				}
+			}
 
 			JsonObject result = raw(message.body(), connection);
 			if (result != null) {
@@ -150,9 +177,21 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 	}
 
 	private JsonObject raw(String query) throws SQLException {
+		return raw(query, false);
+	}
+
+	private JsonObject raw(String query, boolean checkReadOnly) throws SQLException {
 		Connection connection = null;
 		try {
-			connection = ds.getConnection();
+			if (checkReadOnly && dsSlave != null && query != null) {
+				final Matcher m = writingClausesPattern.matcher(query);
+				if (!m.find()) {
+					connection = dsSlave.getConnection();
+				}
+			}
+			if (connection == null) {
+				connection = ds.getConnection();
+			}
 			return raw(query, connection);
 		} finally {
 			if (connection != null) {
@@ -215,7 +254,16 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 	private void doPrepared(Message<JsonObject> message) {
 		Connection connection = null;
 		try {
-			connection = ds.getConnection();
+			final String query = message.body().getString("statement");
+			if (dsSlave != null && isNotEmpty(query)) {
+				final Matcher m = writingClausesPattern.matcher(query);
+				if (!m.find()) {
+					connection = dsSlave.getConnection();
+				}
+			}
+			if (connection == null) {
+				connection = ds.getConnection();
+			}
 
 			JsonObject result = prepared(message.body(), connection);
 			if (result != null) {
@@ -405,7 +453,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 			return;
 		}
 		try {
-			sendOK(message, raw(query));
+			sendOK(message, raw(query, true));
 		} catch (SQLException e) {
 			sendError(message, e.getMessage(), e);
 		}

@@ -118,6 +118,9 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 					connection = dsSlave.getConnection();
 				}
 			}
+			if (connection == null) {
+				connection = ds.getConnection();
+			}
 
 			JsonObject result = raw(message.body(), connection);
 			if (result != null) {

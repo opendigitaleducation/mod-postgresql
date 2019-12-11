@@ -37,7 +37,7 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 	private HikariDataSource ds;
 	private HikariDataSource dsSlave;
 	private Pattern writingClausesPattern = Pattern.compile(
-			"(update\\s+|create\\s+|merge\\s+|delete\\s+|remove\\s+|insert\\s+|alter\\s+|add\\s+|drop\\s+|constraint\\s+|\\s+nextval)",
+			"(update\\s+|create\\s+|merge_|delete\\s+|remove\\s+|insert\\s+|alter\\s+|add\\s+|drop\\s+|constraint\\s+|\\s+nextval)",
 			Pattern.CASE_INSENSITIVE);
 
 	@Override

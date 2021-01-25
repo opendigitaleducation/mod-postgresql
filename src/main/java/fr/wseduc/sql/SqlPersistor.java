@@ -234,6 +234,9 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 					case "prepared":
 						results.add(prepared(json, connection));
 						break;
+					case "upsert":
+						results.add(raw(upsertQuery(json), connection));
+						break;
 					default:
 						connection.rollback();
 						throw new IllegalArgumentException("invalid.action");
@@ -400,12 +403,14 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 		String table = json.getString("table");
 		JsonArray fields = json.getJsonArray("fields");
 		JsonArray conflictFields = json.getJsonArray("conflictFields");
+		boolean hasConflictFields = conflictFields != null && !conflictFields.isEmpty();
 		JsonArray updateFields = json.getJsonArray("updateFields");
 		boolean updateOnConflict = updateFields != null && !updateFields.isEmpty();
 		JsonArray values = json.getJsonArray("values");
 		String returning = json.getString("returning");
 		if (table == null || table.isEmpty() || fields == null ||
-				fields.size() == 0 || values == null || values.size() == 0) {
+				fields.size() == 0 || values == null || values.size() == 0 ||
+				(!hasConflictFields && updateOnConflict)) {
 			return null;
 		}
 		StringBuilder sb = new StringBuilder("INSERT INTO ")
@@ -428,19 +433,19 @@ public class SqlPersistor extends BusModBase implements Handler<Message<JsonObje
 			}
 		}
 		sb.deleteCharAt(sb.length()-1);
-		sb.append(" ON CONFLICT (");
-		conflictFields.stream().forEach(field -> sb.append(escapeField((String)field)).append(","));
-		if (!conflictFields.isEmpty()) {
+		sb.append(" ON CONFLICT ");
+		if (hasConflictFields) {
+			sb.append("(");
+			conflictFields.stream().forEach(field -> sb.append(escapeField((String)field)).append(","));
 			sb.deleteCharAt(sb.length()-1);
+			sb.append(") ");
 		}
 		if(updateOnConflict){
-			sb.append(") DO UPDATE SET ");
+			sb.append("DO UPDATE SET ");
 			updateFields.stream().forEach(field -> sb.append(escapeField((String)field)).append("= EXCLUDED.").append(escapeField((String)field)).append(","));
-			if (!updateFields.isEmpty()) {
-				sb.deleteCharAt(sb.length()-1);
-			}
-		}else {
-			sb.append(") DO NOTHING ");
+			sb.deleteCharAt(sb.length()-1);
+		} else {
+			sb.append("DO NOTHING");
 		}
 		if (returning != null) {
 			sb.append(" RETURNING ").append(returning);
